@@ -2,6 +2,8 @@ module Parser (LispVal(..), parseExpr) where
 
 import Text.ParserCombinators.Parsec hiding (spaces)
 import Numeric (readBin, readOct, readHex)
+import Data.Complex (Complex ((:+)))
+import Data.Ratio ((%))
 
 data LispVal
   = Atom String
@@ -11,10 +13,16 @@ data LispVal
   | String String
   | Bool Bool
   | Char Char
+  | Float Double
+  | Rational Rational
+  | Complex (Complex Double)
   deriving (Show)
 
 parseExpr :: Parser LispVal
 parseExpr = try parseBool
+        <|> try parseComplex
+        <|> try parseFloat
+        <|> try parseRational
         <|> try parseNumber
         <|> try parseChar
         <|> parseAtom
@@ -24,6 +32,31 @@ parseBool :: Parser LispVal
 parseBool = do
   _ <- char '#'
   (char 't' >> return (Bool True)) <|> (char 'f' >> return (Bool False))
+
+parseFloat :: Parser LispVal
+parseFloat = do
+    x <- many1 digit
+    _ <- char '.'
+    y <- many1 digit
+    return $ Float $ read $ x ++ "." ++ y
+    
+parseComplex :: Parser LispVal
+parseComplex = do
+    x <- try parseFloat <|> parseNumber
+    _ <- char '+'
+    y <- try parseFloat <|> parseNumber
+    _ <- char 'i'
+    return $ Complex (toDouble x :+ toDouble y)
+    where toDouble (Float f) = f
+          toDouble (Number n) = fromIntegral n
+          toDouble _ = error "Not gonna happen"
+
+parseRational :: Parser LispVal
+parseRational = do
+    x <- many1 digit
+    _ <- char '/'
+    y <- many1 digit
+    return $ Rational $ read x % read y
 
 parseNumber :: Parser LispVal
 parseNumber = parseRawDecimal
@@ -66,8 +99,10 @@ parseChar = do
     return $ Char $ case c of
         "space" -> ' '
         "newline" -> '\n'
-        _ -> head c
-        
+        [x] -> x
+        _ -> error "Invalid character"
+
+
 parseAtom :: Parser LispVal
 parseAtom = do
   atom <- many (letter <|> digit <|> symbol)
