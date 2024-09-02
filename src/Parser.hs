@@ -105,8 +105,9 @@ parseChar = do
 
 parseAtom :: Parser LispVal
 parseAtom = do
-  atom <- many (letter <|> digit <|> symbol)
-  return $ Atom atom
+  first <- letter <|> symbol
+  others <- many (letter <|> digit <|> symbol)
+  return $ Atom (first : others)
 
 parseString :: Parser LispVal
 parseString = do
