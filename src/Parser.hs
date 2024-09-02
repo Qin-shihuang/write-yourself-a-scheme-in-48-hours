@@ -1,9 +1,9 @@
-module Parser (LispVal(..), parseExpr) where
+module Parser (LispVal (..), parseExpr, spaces) where
 
-import Text.ParserCombinators.Parsec hiding (spaces)
-import Numeric (readBin, readOct, readHex)
 import Data.Complex (Complex ((:+)))
 import Data.Ratio ((%))
+import Numeric (readBin, readHex, readOct)
+import Text.ParserCombinators.Parsec hiding (spaces)
 
 data LispVal
   = Atom String
@@ -18,15 +18,28 @@ data LispVal
   | Complex (Complex Double)
   deriving (Show)
 
+symbol :: Parser Char
+symbol = oneOf "!#%&|*+-/:<=>?@^_~"
+
+spaces :: Parser ()
+spaces = skipMany1 space
+
 parseExpr :: Parser LispVal
-parseExpr = try parseBool
-        <|> try parseComplex
-        <|> try parseFloat
-        <|> try parseRational
-        <|> try parseNumber
-        <|> try parseChar
-        <|> parseAtom
-        <|> parseString
+parseExpr =
+  try parseBool
+    <|> try parseComplex
+    <|> try parseFloat
+    <|> try parseRational
+    <|> try parseNumber
+    <|> try parseChar
+    <|> parseAtom
+    <|> parseString
+    <|> parseQuoted
+    <|> do
+      _ <- char '('
+      x <- try parseList <|> parseDottedList
+      _ <- char ')'
+      return x
 
 parseBool :: Parser LispVal
 parseBool = do
@@ -35,73 +48,74 @@ parseBool = do
 
 parseFloat :: Parser LispVal
 parseFloat = do
-    x <- many1 digit
-    _ <- char '.'
-    y <- many1 digit
-    return $ Float $ read $ x ++ "." ++ y
-    
+  x <- many1 digit
+  _ <- char '.'
+  y <- many1 digit
+  return $ Float $ read $ x ++ "." ++ y
+
 parseComplex :: Parser LispVal
 parseComplex = do
-    x <- try parseFloat <|> parseNumber
-    _ <- char '+'
-    y <- try parseFloat <|> parseNumber
-    _ <- char 'i'
-    return $ Complex (toDouble x :+ toDouble y)
-    where toDouble (Float f) = f
-          toDouble (Number n) = fromIntegral n
-          toDouble _ = error "Not gonna happen"
+  x <- try parseFloat <|> parseNumber
+  _ <- char '+'
+  y <- try parseFloat <|> parseNumber
+  _ <- char 'i'
+  return $ Complex (toDouble x :+ toDouble y)
+  where
+    toDouble (Float f) = f
+    toDouble (Number n) = fromIntegral n
+    toDouble _ = error "Not gonna happen"
 
 parseRational :: Parser LispVal
 parseRational = do
-    x <- many1 digit
-    _ <- char '/'
-    y <- many1 digit
-    return $ Rational $ read x % read y
+  x <- many1 digit
+  _ <- char '/'
+  y <- many1 digit
+  return $ Rational $ read x % read y
 
 parseNumber :: Parser LispVal
-parseNumber = parseRawDecimal
-            <|> parseBinary
-            <|> parseOctal
-            <|> parseDecimal
-            <|> parseHexadecimal
+parseNumber =
+  parseRawDecimal
+    <|> parseBinary
+    <|> parseOctal
+    <|> parseDecimal
+    <|> parseHexadecimal
 
 parseRawDecimal :: Parser LispVal
 parseRawDecimal = Number . read <$> many1 digit
 
 parseBinary :: Parser LispVal
 parseBinary = do
-    _ <- string "#b"
-    d <- many1 (oneOf "01")
-    return $ Number $ fst $ head $ readBin d
+  _ <- string "#b"
+  d <- many1 (oneOf "01")
+  return $ Number $ fst $ head $ readBin d
 
 parseOctal :: Parser LispVal
 parseOctal = do
-    _ <- string "#o"
-    d <- many1 octDigit
-    return $ Number $ fst $ head $ readOct d
+  _ <- string "#o"
+  d <- many1 octDigit
+  return $ Number $ fst $ head $ readOct d
 
 parseDecimal :: Parser LispVal
 parseDecimal = do
-    _ <- string "#d"
-    d <- many1 digit
-    return $ Number $ read d
+  _ <- string "#d"
+  d <- many1 digit
+  return $ Number $ read d
 
 parseHexadecimal :: Parser LispVal
 parseHexadecimal = do
-    _ <- string "#x"
-    d <- many1 hexDigit
-    return $ Number $ fst $ head $ readHex d
+  _ <- string "#x"
+  d <- many1 hexDigit
+  return $ Number $ fst $ head $ readHex d
 
 parseChar :: Parser LispVal
 parseChar = do
-    _ <- string "#\\"
-    c <- many1 letter
-    return $ Char $ case c of
-        "space" -> ' '
-        "newline" -> '\n'
-        [x] -> x
-        _ -> error "Invalid character"
-
+  _ <- string "#\\"
+  c <- many1 letter
+  return $ Char $ case c of
+    "space" -> ' '
+    "newline" -> '\n'
+    [x] -> x
+    _ -> error "Invalid character"
 
 parseAtom :: Parser LispVal
 parseAtom = do
@@ -111,18 +125,28 @@ parseAtom = do
 
 parseString :: Parser LispVal
 parseString = do
-    _ <- char '"'
-    x <- many (noneOf "\\\"" <|> (char '\\' >> oneOf "nrt\\\"" >>= \c -> return $ case c of
-        'n' -> '\n'
-        'r' -> '\r'
-        't' -> '\t'
-        _ -> c))
-    _ <- char '"'
-    return $ String x
+  _ <- char '"'
+  x <-
+    many
+      ( noneOf "\\\""
+          <|> ( char '\\' >> oneOf "nrt\\\"" >>= \c -> return $ case c of
+                  'n' -> '\n'
+                  'r' -> '\r'
+                  't' -> '\t'
+                  _ -> c
+              )
+      )
+  _ <- char '"'
+  return $ String x
 
+parseList :: Parser LispVal
+parseList = List <$> sepBy parseExpr spaces
 
-symbol :: Parser Char
-symbol = oneOf "!#%&|*+-/:<=>?@^_~"
+parseDottedList :: Parser LispVal
+parseDottedList = do
+  listHead <- endBy parseExpr spaces
+  listTail <- char '.' >> spaces >> parseExpr
+  return $ DottedList listHead listTail
 
-spaces :: Parser ()
-spaces = skipMany1 space
+parseQuoted :: Parser LispVal
+parseQuoted = char '\'' >> parseExpr >>= \x -> return $ List [Atom "quote", x]
