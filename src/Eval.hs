@@ -4,53 +4,59 @@ module Eval (eval) where
 
 import Control.Monad.Except
 import Data.Functor ((<&>))
+import Env (Env, IOThrowsError, defineVar, getVar, liftThrows, setVar)
 import Error (LispError (..), ThrowsError)
 import Parser (LispVal (..))
 import Prelude hiding (pred)
 
-eval :: LispVal -> ThrowsError LispVal
-eval val@(String _) = return val
-eval val@(Number _) = return val
-eval val@(Bool _) = return val
-eval val@(Char _) = return val
-eval val@(Float _) = return val
-eval val@(Rational _) = return val
-eval val@(Complex _) = return val
-eval (List [Atom "quote", val]) = return val
-eval (List [Atom "if", pred, conseq, alt]) = do
-  result <- eval pred
+eval :: Env -> LispVal -> IOThrowsError LispVal
+eval _ val@(String _) = return val
+eval _ val@(Number _) = return val
+eval _ val@(Bool _) = return val
+eval _ val@(Char _) = return val
+eval _ val@(Float _) = return val
+eval _ val@(Rational _) = return val
+eval _ val@(Complex _) = return val
+eval env (Atom var) = getVar env var
+eval _ (List [Atom "quote", val]) = return val
+eval env (List [Atom "if", pred, conseq, alt]) = do
+  result <- eval env pred
   case result of
-    Bool False -> eval alt
-    Bool True -> eval conseq
-    _ -> Left $ TypeMismatch "boolean" result
-eval (List [Atom "cond"]) = throwError $ BadSpecialForm "No true clause in cond expression: " (List [Atom "cond"])
-eval (List (Atom "cond" : (List [test, expr]) : clauses)) = do
+    Bool False -> eval env alt
+    Bool True -> eval env conseq
+    _ -> throwError $ TypeMismatch "boolean" result
+eval _ (List [Atom "cond"]) = throwError $ BadSpecialForm "No true clause in cond expression: " (List [Atom "cond"])
+eval env (List (Atom "cond" : (List [test, expr]) : clauses)) = do
   if test == Atom "else"
     then
       if null clauses
-        then eval expr
+        then eval env expr
         else throwError $ BadSpecialForm "else clause isn't last: " (List [test, expr])
     else do
-      result <- eval test
+      result <- eval env test
       case result of
-        Bool True -> eval expr
-        Bool False -> eval (List (Atom "cond" : clauses))
+        Bool True -> eval env expr
+        Bool False -> eval env (List (Atom "cond" : clauses))
         pred -> throwError $ TypeMismatch "boolean" pred
-eval form@(List (Atom "case" : key : clauses)) =
+eval env form@(List (Atom "case" : key : clauses)) =
   if null clauses
     then
       throwError $ BadSpecialForm "No true clause in case expression: " form
     else case head clauses of
-      List (Atom "else" : exprs) -> mapM eval exprs <&> last
+      List (Atom "else" : exprs) -> mapM (eval env) exprs <&> last
       List (List datums : exprs) -> do
-        result <- eval key
-        equality <- mapM (\x -> eqv [result, x]) datums
+        result <- eval env key
+        equality <- mapM (\x -> liftThrows (eqv [result, x])) datums
         if Bool True `elem` equality
-          then mapM eval exprs <&> last
-          else eval $ List (Atom "case" : key : tail clauses)
+          then mapM (eval env) exprs <&> last
+          else eval env $ List (Atom "case" : key : tail clauses)
       _ -> throwError $ BadSpecialForm "Ill-formed case expression: " form
-eval (List (Atom func : args)) = mapM eval args >>= apply func
-eval badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
+eval env (List [Atom "set!", Atom var, form]) =
+  eval env form >>= setVar env var
+eval env (List [Atom "define", Atom var, form]) =
+  eval env form >>= defineVar env var
+eval env (List (Atom func : args)) = mapM (eval env) args >>= liftThrows . apply func
+eval _ badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
 
 apply :: String -> [LispVal] -> ThrowsError LispVal
 apply f args = maybe (throwError $ NotFunction "Unrecognized primitive function args" f) ($ args) $ lookup f primitives
@@ -212,7 +218,7 @@ eqvList eqvFunc [List arg1, List arg2] =
     eqvPair (x1, x2) = case eqvFunc [x1, x2] of
       Left _ -> False
       Right (Bool val) -> val
-      Right _ -> False
+      _ -> False
 eqvList _ _ = throwError $ Default "Unexpected error in eqvList"
 
 data Unpacker = forall a. (Eq a) => AnyUnpacker (LispVal -> ThrowsError a)
@@ -270,5 +276,6 @@ stringRef [String _, Number _] = throwError $ Default "Out of bounds"
 stringRef [badArg] = throwError $ TypeMismatch "string and number" badArg
 stringRef badArgList = throwError $ NumArgs 2 badArgList
 
+-- TODO
 stringSet :: [LispVal] -> ThrowsError LispVal
 stringSet = undefined

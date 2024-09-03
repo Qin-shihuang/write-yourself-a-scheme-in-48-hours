@@ -25,6 +25,7 @@ dependencies:
 - HUnit
 - array
 - mtl
+- containers
 
 ghc-options:
 - -Wall
