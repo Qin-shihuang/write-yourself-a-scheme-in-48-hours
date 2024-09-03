@@ -27,9 +27,9 @@ library
   exposed-modules:
       Main
   other-modules:
+      Error
       Eval
       Parser
-      Test
       Paths_scheme
   autogen-modules:
       Paths_scheme
@@ -40,15 +40,16 @@ library
       HUnit
     , array
     , base >=4.7 && <5
+    , mtl
     , parsec
   default-language: Haskell2010
 
 executable scheme-exe
   main-is: Main.hs
   other-modules:
+      Error
       Eval
       Parser
-      Test
       Paths_scheme
   autogen-modules:
       Paths_scheme
@@ -59,5 +60,6 @@ executable scheme-exe
       HUnit
     , array
     , base >=4.7 && <5
+    , mtl
     , parsec
   default-language: Haskell2010

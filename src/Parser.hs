@@ -1,10 +1,11 @@
-module Parser (LispVal (..), parseExpr, showVal, spaces) where
+module Parser (LispVal (..), parseExpr, showVal, spaces, unwordsList) where
 
 import Data.Array (Array, listArray, elems)
 import Data.Complex (Complex ((:+)))
 import Data.Ratio ((%))
 import Numeric (readBin, readHex, readOct)
 import Text.ParserCombinators.Parsec hiding (spaces)
+
 data LispVal
   = Atom String
   | List [LispVal]

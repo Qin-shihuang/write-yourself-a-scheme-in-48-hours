@@ -21,6 +21,10 @@ description:         Please see the README on GitHub at <https://github.com/gith
 
 dependencies:
 - base >= 4.7 && < 5
+- parsec
+- HUnit
+- array
+- mtl
 
 ghc-options:
 - -Wall
@@ -41,10 +45,6 @@ library:
   - -with-rtsopts=-N
   exposed-modules:
   - Main
-  dependencies:
-  - parsec
-  - HUnit
-  - array
 
 executables:
   scheme-exe:
@@ -54,7 +54,3 @@ executables:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
-    dependencies:
-    - parsec
-    - HUnit
-    - array
