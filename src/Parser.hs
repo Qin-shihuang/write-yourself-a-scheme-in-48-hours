@@ -33,6 +33,7 @@ import Text.ParserCombinators.Parsec
     (<|>),
   )
 import Control.Monad (foldM)
+import System.IO (Handle)
 
 data LispVal
   = Atom String
@@ -48,7 +49,8 @@ data LispVal
   | Complex (Complex Double)
   | PrimitiveFunc ([LispVal] -> ThrowsError LispVal)
   | Func {params :: [String], vararg :: Maybe String, body :: [LispVal], closure :: Env}
-
+  | IOFunc ([LispVal] -> IOThrowsError LispVal)
+  | Port Handle
 data LispError
   = NumArgs Integer [LispVal]
   | TypeMismatch String LispVal
@@ -240,6 +242,8 @@ showVal (Complex c) = show c
 showVal (PrimitiveFunc _) = "<primitive>"
 showVal (Func {params = args, vararg = varargs, body = _, closure = _}) =
   "(lambda (" ++ unwords (map show args) ++ (case varargs of Just arg -> " . " ++ arg; Nothing -> "") ++ ") ...)"
+showVal (IOFunc _) = "<IO primitive>"
+showVal (Port _) = "<IO port>"
 
 unwordsList :: [LispVal] -> String
 unwordsList = unwords . map showVal
