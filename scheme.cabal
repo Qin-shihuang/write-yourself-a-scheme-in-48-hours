@@ -27,8 +27,6 @@ library
   exposed-modules:
       Main
   other-modules:
-      Env
-      Error
       Eval
       Parser
       Paths_scheme
@@ -49,8 +47,6 @@ library
 executable scheme-exe
   main-is: Main.hs
   other-modules:
-      Env
-      Error
       Eval
       Parser
       Paths_scheme

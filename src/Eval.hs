@@ -1,12 +1,13 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# OPTIONS_GHC -Wno-name-shadowing #-}
 
-module Eval (eval) where
+module Eval (eval, primitiveBindings) where
 
 import Control.Monad.Except
+import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Functor ((<&>))
-import Env (Env, IOThrowsError, defineVar, getVar, liftThrows, setVar)
-import Error (LispError (..), ThrowsError)
-import Parser (LispVal (..))
+import Data.Maybe (isNothing)
+import Parser (Env, IOThrowsError, LispError (..), LispVal (..), ThrowsError, bindVars, defineVar, getVar, liftThrows, nullEnv, setVar, showVal)
 import Prelude hiding (pred)
 
 eval :: Env -> LispVal -> IOThrowsError LispVal
@@ -26,7 +27,7 @@ eval env (List [Atom "if", pred, conseq, alt]) = do
     Bool True -> eval env conseq
     _ -> throwError $ TypeMismatch "boolean" result
 eval _ (List [Atom "cond"]) = throwError $ BadSpecialForm "No true clause in cond expression: " (List [Atom "cond"])
-eval env (List (Atom "cond" : (List [test, expr]) : clauses)) = do
+eval env (List (Atom "cond" : (List [test, expr]) : clauses)) =
   if test == Atom "else"
     then
       if null clauses
@@ -55,11 +56,50 @@ eval env (List [Atom "set!", Atom var, form]) =
   eval env form >>= setVar env var
 eval env (List [Atom "define", Atom var, form]) =
   eval env form >>= defineVar env var
-eval env (List (Atom func : args)) = mapM (eval env) args >>= liftThrows . apply func
+eval env (List (Atom "define" : List (Atom var : params) : body)) =
+  makeNormalFunc env params body >>= defineVar env var
+eval env (List (Atom "define" : DottedList (Atom var : params) varargs : body)) =
+  makeVarArgs varargs env params body >>= defineVar env var
+eval env (List (Atom "lambda" : List params : body)) =
+  makeNormalFunc env params body
+eval env (List (Atom "lambda" : DottedList params varargs : body)) =
+  makeVarArgs varargs env params body
+eval env (List (Atom "lambda" : varargs@(Atom _) : body)) =
+  makeVarArgs varargs env [] body
+eval env (List (function : args)) = do
+  func <- eval env function
+  argVals <- mapM (eval env) args
+  apply func argVals
 eval _ badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
 
-apply :: String -> [LispVal] -> ThrowsError LispVal
-apply f args = maybe (throwError $ NotFunction "Unrecognized primitive function args" f) ($ args) $ lookup f primitives
+apply :: LispVal -> [LispVal] -> IOThrowsError LispVal
+apply (PrimitiveFunc func) args = liftThrows $ func args
+apply (Func params varargs body closure) args =
+  if num params /= num args && isNothing varargs
+    then throwError $ NumArgs (num params) args
+    else liftIO (bindVars closure $ zip params args) >>= bindVarArgs varargs >>= evalBody
+  where
+    remainingArgs = drop (length params) args
+    num = toInteger . length
+    evalBody env = last <$> mapM (eval env) body
+    bindVarArgs arg env = case arg of
+      Just argName -> liftIO $ bindVars env [(argName, List remainingArgs)]
+      Nothing -> return env
+apply _ _ = throwError $ Default "Unknown error in apply"
+
+makeFunc :: (Monad m) => Maybe String -> Env -> [LispVal] -> [LispVal] -> m LispVal
+makeFunc varargs env params body = return $ Func (map showVal params) varargs body env
+
+makeNormalFunc :: Env -> [LispVal] -> [LispVal] -> ExceptT LispError IO LispVal
+makeNormalFunc = makeFunc Nothing
+
+makeVarArgs :: LispVal -> Env -> [LispVal] -> [LispVal] -> ExceptT LispError IO LispVal
+makeVarArgs = makeFunc . Just . showVal
+
+primitiveBindings :: IO Env
+primitiveBindings = nullEnv >>= flip bindVars (map makePrimitiveFunc primitives)
+  where
+    makePrimitiveFunc (var, func) = (var, PrimitiveFunc func)
 
 primitives :: [(String, [LispVal] -> ThrowsError LispVal)]
 primitives =
@@ -212,7 +252,7 @@ eqvList :: ([LispVal] -> ThrowsError LispVal) -> [LispVal] -> ThrowsError LispVa
 eqvList eqvFunc [List arg1, List arg2] =
   return $
     Bool $
-      (length arg1 == length arg2)
+      length arg1 == length arg2
         && all eqvPair (zip arg1 arg2)
   where
     eqvPair (x1, x2) = case eqvFunc [x1, x2] of

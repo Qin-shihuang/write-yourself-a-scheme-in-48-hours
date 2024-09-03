@@ -1,10 +1,38 @@
-module Parser (LispVal (..), parseExpr, showVal, spaces, unwordsList) where
+{-# OPTIONS_GHC -Wno-partial-fields #-}
+{-# OPTIONS_GHC -Wno-name-shadowing #-}
 
+module Parser (LispVal (..), parseExpr, showVal, spaces, unwordsList, LispError (..), ThrowsError, trapError, extractValue, Env, liftThrows, nullEnv, runIOThrows, IOThrowsError, getVar, setVar, defineVar, bindVars) where
+
+import Control.Monad.Except
+import Control.Monad.IO.Class (MonadIO (liftIO))
 import Data.Array (Array, elems, listArray)
 import Data.Complex (Complex ((:+)))
+import Data.Functor
+import Data.IORef
+import qualified Data.Map as Map
 import Data.Ratio ((%))
 import Numeric (readBin, readHex, readOct)
-import Text.ParserCombinators.Parsec hiding (spaces)
+import Text.ParserCombinators.Parsec
+  ( ParseError,
+    Parser,
+    char,
+    digit,
+    endBy,
+    hexDigit,
+    letter,
+    many,
+    many1,
+    noneOf,
+    octDigit,
+    oneOf,
+    sepBy,
+    skipMany1,
+    space,
+    string,
+    try,
+    (<|>),
+  )
+import Control.Monad (foldM)
 
 data LispVal
   = Atom String
@@ -18,7 +46,31 @@ data LispVal
   | Float Double
   | Rational Rational
   | Complex (Complex Double)
-  deriving (Eq)
+  | PrimitiveFunc ([LispVal] -> ThrowsError LispVal)
+  | Func {params :: [String], vararg :: Maybe String, body :: [LispVal], closure :: Env}
+
+data LispError
+  = NumArgs Integer [LispVal]
+  | TypeMismatch String LispVal
+  | Parser ParseError
+  | BadSpecialForm String LispVal
+  | NotFunction String String
+  | UnboundVar String String
+  | Default String
+
+instance Eq LispVal where
+  (==) (Atom a) (Atom b) = a == b
+  (==) (List a) (List b) = a == b
+  (==) (DottedList a b) (DottedList c d) = a == c && b == d
+  (==) (Number a) (Number b) = a == b
+  (==) (String a) (String b) = a == b
+  (==) (Vector a) (Vector b) = a == b
+  (==) (Bool a) (Bool b) = a == b
+  (==) (Char a) (Char b) = a == b
+  (==) (Float a) (Float b) = a == b
+  (==) (Rational a) (Rational b) = a == b
+  (==) (Complex a) (Complex b) = a == b
+  (==) _ _ = False
 
 symbol :: Parser Char
 symbol = oneOf "!#%&|*+-/:<=>?@^_~"
@@ -185,6 +237,92 @@ showVal (Char c) = "#\\" ++ [c]
 showVal (Float f) = show f
 showVal (Rational r) = show r
 showVal (Complex c) = show c
+showVal (PrimitiveFunc _) = "<primitive>"
+showVal (Func {params = args, vararg = varargs, body = _, closure = _}) =
+  "(lambda (" ++ unwords (map show args) ++ (case varargs of Just arg -> " . " ++ arg; Nothing -> "") ++ ") ...)"
 
 unwordsList :: [LispVal] -> String
 unwordsList = unwords . map showVal
+
+instance Show LispError where
+  show = showError
+
+showError :: LispError -> String
+showError (NumArgs expected found) = "Expected " ++ show expected ++ " args; found values " ++ unwordsList found
+showError (TypeMismatch expected found) = "Invalid type: expected " ++ expected ++ ", found " ++ show found
+showError (Parser parseErr) = "Parse error at " ++ show parseErr
+showError (BadSpecialForm message form) = message ++ ": " ++ show form
+showError (NotFunction message func) = message ++ ": " ++ show func
+showError (UnboundVar message varname) = message ++ ": " ++ varname
+showError (Default message) = message
+
+instance Eq LispError where
+  (==) = eqError
+
+eqError :: LispError -> LispError -> Bool
+eqError (NumArgs a1 b1) (NumArgs a2 b2) = a1 == a2 && b1 == b2
+eqError (TypeMismatch a1 b1) (TypeMismatch a2 b2) = a1 == a2 && b1 == b2
+eqError (Parser a1) (Parser a2) = a1 == a2
+eqError (BadSpecialForm a1 b1) (BadSpecialForm a2 b2) = a1 == a2 && b1 == b2
+eqError (NotFunction a1 b1) (NotFunction a2 b2) = a1 == a2 && b1 == b2
+eqError (UnboundVar a1 b1) (UnboundVar a2 b2) = a1 == a2 && b1 == b2
+eqError (Default a1) (Default a2) = a1 == a2
+eqError _ _ = False
+
+trapError :: (MonadError e m, Show e) => m String -> m String
+trapError action = catchError action (return . show)
+
+type ThrowsError = Either LispError
+
+extractValue :: ThrowsError a -> a
+extractValue (Right val) = val
+extractValue _ = undefined
+
+type Env = IORef (Map.Map String (IORef LispVal))
+
+nullEnv :: IO Env
+nullEnv = newIORef Map.empty
+
+type IOThrowsError = ExceptT LispError IO
+
+liftThrows :: ThrowsError a -> IOThrowsError a
+liftThrows (Left err) = throwError err
+liftThrows (Right val) = return val
+
+runIOThrows :: IOThrowsError String -> IO String
+runIOThrows action = runExceptT (trapError action) <&> extractValue
+
+isBound :: Env -> String -> IO Bool
+isBound envRef var = readIORef envRef <&> Map.member var
+
+getVar :: Env -> String -> IOThrowsError LispVal
+getVar envRef var = do
+  env <- liftIO $ readIORef envRef
+  maybe (throwError $ UnboundVar "Getting an unbound variable" var) (liftIO . readIORef) (Map.lookup var env)
+
+setVar :: Env -> String -> LispVal -> IOThrowsError LispVal
+setVar envRef var value = do
+  env <- liftIO $ readIORef envRef
+  maybe (throwError $ UnboundVar "Setting an unbound variable" var) (liftIO . flip writeIORef value) (Map.lookup var env)
+  return value
+
+defineVar :: Env -> String -> LispVal -> IOThrowsError LispVal
+defineVar envRef var value = do
+  alreadyDefined <- liftIO $ isBound envRef var
+  if alreadyDefined
+    then setVar envRef var value $> value
+    else liftIO $ do
+      valueRef <- newIORef value
+      modifyIORef envRef $ Map.insert var valueRef
+      return value
+
+bindVars :: Env -> [(String, LispVal)] -> IO Env
+bindVars envRef bindings = do
+  env <- readIORef envRef
+  newEnv <- foldM addBinding env bindings
+  newIORef newEnv
+  where
+    addBinding :: Map.Map String (IORef LispVal) -> (String, LispVal) -> IO (Map.Map String (IORef LispVal))
+    addBinding env (var, value) = do
+      valueRef <- newIORef value
+      return $ Map.insert var valueRef env
