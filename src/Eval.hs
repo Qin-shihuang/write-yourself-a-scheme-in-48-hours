@@ -1,11 +1,12 @@
 {-# LANGUAGE ExistentialQuantification #-}
+
 module Eval (eval) where
 
 import Control.Monad.Except
+import Data.Functor ((<&>))
 import Error (LispError (..), ThrowsError)
 import Parser (LispVal (..))
 import Prelude hiding (pred)
-import Data.Functor ((<&>))
 
 eval :: LispVal -> ThrowsError LispVal
 eval val@(String _) = return val
@@ -17,35 +18,37 @@ eval val@(Rational _) = return val
 eval val@(Complex _) = return val
 eval (List [Atom "quote", val]) = return val
 eval (List [Atom "if", pred, conseq, alt]) = do
-    result <- eval pred
-    case result of
-        Bool False -> eval alt
-        Bool True -> eval conseq
-        _ -> Left $ TypeMismatch "boolean" result
+  result <- eval pred
+  case result of
+    Bool False -> eval alt
+    Bool True -> eval conseq
+    _ -> Left $ TypeMismatch "boolean" result
 eval (List [Atom "cond"]) = throwError $ BadSpecialForm "No true clause in cond expression: " (List [Atom "cond"])
 eval (List (Atom "cond" : (List [test, expr]) : clauses)) = do
-  if test == Atom "else" then
-    if null clauses
-      then eval expr
-      else throwError $ BadSpecialForm "else clause isn't last: " (List [test, expr])
-  else do
-    result <- eval test
-    case result of
-      Bool True -> eval expr
-      Bool False -> eval (List (Atom "cond" : clauses))
-      pred -> throwError $ TypeMismatch "boolean" pred
+  if test == Atom "else"
+    then
+      if null clauses
+        then eval expr
+        else throwError $ BadSpecialForm "else clause isn't last: " (List [test, expr])
+    else do
+      result <- eval test
+      case result of
+        Bool True -> eval expr
+        Bool False -> eval (List (Atom "cond" : clauses))
+        pred -> throwError $ TypeMismatch "boolean" pred
 eval form@(List (Atom "case" : key : clauses)) =
-    if null clauses then
-        throwError $ BadSpecialForm "No true clause in case expression: " form
+  if null clauses
+    then
+      throwError $ BadSpecialForm "No true clause in case expression: " form
     else case head clauses of
-        List (Atom "else" : exprs) -> mapM eval exprs <&>  last
-        List (List datums : exprs) -> do
-            result <- eval key
-            equality <- mapM (\x -> eqv [result, x]) datums
-            if Bool True `elem` equality
-                then mapM eval exprs <&> last
-                else eval $ List (Atom "case" : key : tail clauses)
-        _ -> throwError $ BadSpecialForm "Ill-formed case expression: " form
+      List (Atom "else" : exprs) -> mapM eval exprs <&> last
+      List (List datums : exprs) -> do
+        result <- eval key
+        equality <- mapM (\x -> eqv [result, x]) datums
+        if Bool True `elem` equality
+          then mapM eval exprs <&> last
+          else eval $ List (Atom "case" : key : tail clauses)
+      _ -> throwError $ BadSpecialForm "Ill-formed case expression: " form
 eval (List (Atom func : args)) = mapM eval args >>= apply func
 eval badForm = throwError $ BadSpecialForm "Unrecognized special form" badForm
 
@@ -200,32 +203,40 @@ eqv [_, _] = return $ Bool False
 eqv badArgList = throwError $ NumArgs 2 badArgList
 
 eqvList :: ([LispVal] -> ThrowsError LispVal) -> [LispVal] -> ThrowsError LispVal
-eqvList eqvFunc [List arg1, List arg2] = return $ Bool $ (length arg1 == length arg2) &&
-                                                 all eqvPair (zip arg1 arg2)
-   where eqvPair (x1, x2) = case eqvFunc [x1, x2] of
-                                 Left _ -> False
-                                 Right (Bool val) -> val
-                                 Right _ -> False
+eqvList eqvFunc [List arg1, List arg2] =
+  return $
+    Bool $
+      (length arg1 == length arg2)
+        && all eqvPair (zip arg1 arg2)
+  where
+    eqvPair (x1, x2) = case eqvFunc [x1, x2] of
+      Left _ -> False
+      Right (Bool val) -> val
+      Right _ -> False
 eqvList _ _ = throwError $ Default "Unexpected error in eqvList"
 
-data Unpacker = forall a. Eq a => AnyUnpacker (LispVal -> ThrowsError a)
+data Unpacker = forall a. (Eq a) => AnyUnpacker (LispVal -> ThrowsError a)
 
 unpackEquals :: LispVal -> LispVal -> Unpacker -> ThrowsError Bool
 unpackEquals arg1 arg2 (AnyUnpacker unpacker) =
-             do unpacked1 <- unpacker arg1
-                unpacked2 <- unpacker arg2
-                return $ unpacked1 == unpacked2
-        `catchError` const (return False)
+  do
+    unpacked1 <- unpacker arg1
+    unpacked2 <- unpacker arg2
+    return $ unpacked1 == unpacked2
+    `catchError` const (return False)
 
 equal :: [LispVal] -> ThrowsError LispVal
 equal [l1@(List _), l2@(List _)] = eqvList equal [l1, l2]
 equal [arg1, arg2] = do
-      primitiveEquals <- or <$> mapM (unpackEquals arg1 arg2)
-                         [AnyUnpacker unpackNumber, AnyUnpacker unpackString, AnyUnpacker unpackBool]
-      eqvEquals <- eqv [arg1, arg2]
-      case (primitiveEquals, eqvEquals) of
-        (True, Bool True) -> return $ Bool True
-        _ -> return $ Bool False
+  primitiveEquals <-
+    or
+      <$> mapM
+        (unpackEquals arg1 arg2)
+        [AnyUnpacker unpackNumber, AnyUnpacker unpackString, AnyUnpacker unpackBool]
+  eqvEquals <- eqv [arg1, arg2]
+  case (primitiveEquals, eqvEquals) of
+    (True, Bool True) -> return $ Bool True
+    _ -> return $ Bool False
 equal badArgList = throwError $ NumArgs 2 badArgList
 
 makeString :: [LispVal] -> ThrowsError LispVal
@@ -237,11 +248,12 @@ makeString [badArg] = throwError $ TypeMismatch "number or char" badArg
 makeString badArgList = throwError $ NumArgs 2 badArgList
 
 string :: [LispVal] -> ThrowsError LispVal
-string (Char c:cs) = let rest = string cs
-                     in case rest of
-                          Right (String s) -> return $ String $ c:s
-                          Left err -> Left err
-                          _ -> Left $ Default "Unexpected error in string"
+string (Char c : cs) =
+  let rest = string cs
+   in case rest of
+        Right (String s) -> return $ String $ c : s
+        Left err -> Left err
+        _ -> Left $ Default "Unexpected error in string"
 string [] = return $ String ""
 string badArgList = throwError $ TypeMismatch "char" $ List badArgList
 
