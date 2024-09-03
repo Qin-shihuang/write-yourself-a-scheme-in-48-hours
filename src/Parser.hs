@@ -1,22 +1,23 @@
-module Parser (LispVal (..), parseExpr, spaces) where
+module Parser (LispVal (..), parseExpr, showVal, spaces) where
 
+import Data.Array (Array, listArray, elems)
 import Data.Complex (Complex ((:+)))
 import Data.Ratio ((%))
 import Numeric (readBin, readHex, readOct)
 import Text.ParserCombinators.Parsec hiding (spaces)
-
 data LispVal
   = Atom String
   | List [LispVal]
   | DottedList [LispVal] LispVal
   | Number Integer
   | String String
+  | Vector (Array Int LispVal)
   | Bool Bool
   | Char Char
   | Float Double
   | Rational Rational
   | Complex (Complex Double)
-  deriving (Show)
+  deriving (Eq)
 
 symbol :: Parser Char
 symbol = oneOf "!#%&|*+-/:<=>?@^_~"
@@ -26,15 +27,18 @@ spaces = skipMany1 space
 
 parseExpr :: Parser LispVal
 parseExpr =
-  try parseBool
+        try parseBool
+    <|> parseVector
     <|> try parseComplex
     <|> try parseFloat
     <|> try parseRational
-    <|> try parseNumber
-    <|> try parseChar
+    <|> parseNumber
+    <|> parseChar
     <|> parseAtom
     <|> parseString
     <|> parseQuoted
+    <|> parseQuasiQuoted
+    <|> parseUnQuote
     <|> do
       _ <- char '('
       x <- try parseList <|> parseDottedList
@@ -74,7 +78,7 @@ parseRational = do
 
 parseNumber :: Parser LispVal
 parseNumber =
-  parseRawDecimal
+        parseRawDecimal
     <|> parseBinary
     <|> parseOctal
     <|> parseDecimal
@@ -139,6 +143,13 @@ parseString = do
   _ <- char '"'
   return $ String x
 
+parseVector :: Parser LispVal
+parseVector = do
+  _ <- string "#("
+  x <- sepBy parseExpr spaces
+  _ <- char ')'
+  return $ Vector (listArray (0, length x - 1) x)
+
 parseList :: Parser LispVal
 parseList = List <$> sepBy parseExpr spaces
 
@@ -150,3 +161,29 @@ parseDottedList = do
 
 parseQuoted :: Parser LispVal
 parseQuoted = char '\'' >> parseExpr >>= \x -> return $ List [Atom "quote", x]
+
+parseQuasiQuoted :: Parser LispVal
+parseQuasiQuoted = char '`' >> parseExpr >>= \x -> return $ List [Atom "quasiquote", x]
+
+parseUnQuote :: Parser LispVal
+parseUnQuote = char ',' >> parseExpr >>= \x -> return $ List [Atom "unquote", x]
+
+instance Show LispVal where
+  show = showVal
+
+showVal :: LispVal -> String
+showVal (String contents) = "\"" ++ contents ++ "\""
+showVal (Atom name) = name
+showVal (Number contents) = show contents
+showVal (Bool True) = "#t"
+showVal (Bool False) = "#f"
+showVal (List contents) = "(" ++ unwordsList contents ++ ")"
+showVal (Vector arr) = "(" ++ unwordsList (elems arr) ++ ")"
+showVal (DottedList listHead listTail) = "(" ++ unwordsList listHead ++ "." ++ showVal listTail ++ ")"
+showVal (Char c) = "#\\" ++ [c]
+showVal (Float f) = show f
+showVal (Rational r) = show r
+showVal (Complex c) = show c
+
+unwordsList :: [LispVal] -> String
+unwordsList = unwords . map showVal

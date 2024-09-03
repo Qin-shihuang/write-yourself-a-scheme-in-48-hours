@@ -1,15 +1,15 @@
-module Main (main) where
+module Main (main, readExpr) where
 
 import System.Environment
-import Parser (parseExpr)
+import Parser
+import Eval
 import Text.ParserCombinators.Parsec hiding (spaces)
 
-readExpr :: String -> String
-readExpr input = case parse (skipMany space >> parseExpr) "lisp" input of
-  Left err -> "No match: " ++ show err
-  Right val -> "Found value: " ++ show val
+readExpr :: String -> LispVal
+readExpr input = case parse parseExpr "lisp" input of
+  Left err -> String $ "No match: " ++ show err
+  Right val -> val
 
 main :: IO ()
 main = do
-  args <- getArgs
-  putStrLn $ readExpr $ head args
+  getArgs >>= print . eval . readExpr . head

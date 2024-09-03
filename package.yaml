@@ -43,6 +43,8 @@ library:
   - Main
   dependencies:
   - parsec
+  - HUnit
+  - array
 
 executables:
   scheme-exe:
@@ -54,3 +56,5 @@ executables:
     - -with-rtsopts=-N
     dependencies:
     - parsec
+    - HUnit
+    - array
