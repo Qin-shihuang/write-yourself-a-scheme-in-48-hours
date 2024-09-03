@@ -1,6 +1,6 @@
 module Parser (LispVal (..), parseExpr, showVal, spaces, unwordsList) where
 
-import Data.Array (Array, listArray, elems)
+import Data.Array (Array, elems, listArray)
 import Data.Complex (Complex ((:+)))
 import Data.Ratio ((%))
 import Numeric (readBin, readHex, readOct)
@@ -28,7 +28,7 @@ spaces = skipMany1 space
 
 parseExpr :: Parser LispVal
 parseExpr =
-        try parseBool
+  try parseBool
     <|> parseVector
     <|> try parseComplex
     <|> try parseFloat
@@ -79,7 +79,7 @@ parseRational = do
 
 parseNumber :: Parser LispVal
 parseNumber =
-        parseRawDecimal
+  parseRawDecimal
     <|> parseBinary
     <|> parseOctal
     <|> parseDecimal
@@ -180,7 +180,7 @@ showVal (Bool True) = "#t"
 showVal (Bool False) = "#f"
 showVal (List contents) = "(" ++ unwordsList contents ++ ")"
 showVal (Vector arr) = "(" ++ unwordsList (elems arr) ++ ")"
-showVal (DottedList listHead listTail) = "(" ++ unwordsList listHead ++ "." ++ showVal listTail ++ ")"
+showVal (DottedList listHead listTail) = "(" ++ unwordsList listHead ++ " . " ++ showVal listTail ++ ")"
 showVal (Char c) = "#\\" ++ [c]
 showVal (Float f) = show f
 showVal (Rational r) = show r

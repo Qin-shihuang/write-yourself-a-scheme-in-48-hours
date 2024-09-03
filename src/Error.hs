@@ -1,9 +1,8 @@
-module Error(LispError(..), ThrowsError, extractValue, trapError) where
-
-import Parser
-import Text.ParserCombinators.Parsec hiding (spaces)
+module Error (LispError (..), ThrowsError, extractValue, trapError) where
 
 import Control.Monad.Except
+import Parser
+import Text.ParserCombinators.Parsec hiding (spaces)
 
 data LispError
   = NumArgs Integer [LispVal]
