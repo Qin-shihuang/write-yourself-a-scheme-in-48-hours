@@ -27,7 +27,6 @@ import Text.ParserCombinators.Parsec
     oneOf,
     sepBy,
     skipMany1,
-    space,
     string,
     try,
     (<|>),
@@ -78,7 +77,7 @@ symbol :: Parser Char
 symbol = oneOf "!#%&|*+-/:<=>?@^_~"
 
 spaces :: Parser ()
-spaces = skipMany1 space
+spaces = skipMany1 $ oneOf " \t\n"
 
 parseExpr :: Parser LispVal
 parseExpr =

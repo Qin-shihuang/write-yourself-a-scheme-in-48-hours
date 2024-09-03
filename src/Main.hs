@@ -3,6 +3,14 @@ module Main (main, readExpr) where
 import Control.Monad.Except
 import Eval
 import Parser
+    ( Env,
+      ThrowsError,
+      LispError(Parser),
+      LispVal(String, List, Atom),
+      parseExpr,
+      liftThrows,
+      runIOThrows,
+      bindVars )
 import System.Environment
 import System.IO
 import Text.ParserCombinators.Parsec hiding (spaces)
